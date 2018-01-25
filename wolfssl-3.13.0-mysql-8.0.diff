@@ -1,0 +1,384 @@
+diff -ur -N -d -x CMakeLists.txt wolfssl-3.13.0-pristine/src/internal.c wolfssl-3.13.0/src/internal.c
+--- wolfssl-3.13.0-pristine/src/internal.c	2017-12-21 19:23:03.000000000 +0200
++++ wolfssl-3.13.0/src/internal.c	2018-01-03 17:13:10.889281600 +0200
+@@ -3992,6 +3992,17 @@
+     ssl->devId = ctx->devId;
+ #endif
+ 
++    /* downgrade the version according to the flags */
++    if (ssl->options.downgrade)
++    {
++      if ((ssl->options.mask & (SSL_OP_NO_SSLv3 | SSL_OP_NO_TLSv1)) == SSL_OP_NO_TLSv1)
++        wolfSSL_SetVersion(ssl, WOLFSSL_SSLV3);
++      else if ((ssl->options.mask & (SSL_OP_NO_TLSv1 | SSL_OP_NO_TLSv1_1)) == SSL_OP_NO_TLSv1_1)
++        wolfSSL_SetVersion(ssl, WOLFSSL_TLSV1);
++      else if ((ssl->options.mask & (SSL_OP_NO_TLSv1_1 | SSL_OP_NO_TLSv1_2)) == SSL_OP_NO_TLSv1_2)
++        wolfSSL_SetVersion(ssl, WOLFSSL_TLSV1_1);
++    }
++
+     if (writeDup == 0) {
+         int keySz = 0;
+ #ifndef NO_CERTS
+@@ -4722,7 +4733,7 @@
+     XFREE(ssl->buffers.serverDH_Priv.buffer, ssl->heap, DYNAMIC_TYPE_PRIVATE_KEY);
+     XFREE(ssl->buffers.serverDH_Pub.buffer, ssl->heap, DYNAMIC_TYPE_PUBLIC_KEY);
+     /* parameters (p,g) may be owned by ctx */
+-    if (ssl->buffers.weOwnDH || ssl->options.side == WOLFSSL_CLIENT_END) {
++    if (ssl->buffers.weOwnDH /*|| ssl->options.side == WOLFSSL_CLIENT_END*/) {
+         XFREE(ssl->buffers.serverDH_G.buffer, ssl->heap, DYNAMIC_TYPE_PUBLIC_KEY);
+         XFREE(ssl->buffers.serverDH_P.buffer, ssl->heap, DYNAMIC_TYPE_PUBLIC_KEY);
+     }
+@@ -4971,7 +4982,7 @@
+     XFREE(ssl->buffers.serverDH_Pub.buffer, ssl->heap, DYNAMIC_TYPE_PUBLIC_KEY);
+     ssl->buffers.serverDH_Pub.buffer = NULL;
+     /* parameters (p,g) may be owned by ctx */
+-    if (ssl->buffers.weOwnDH || ssl->options.side == WOLFSSL_CLIENT_END) {
++    if (ssl->buffers.weOwnDH /*|| ssl->options.side == WOLFSSL_CLIENT_END*/) {
+         XFREE(ssl->buffers.serverDH_G.buffer, ssl->heap, DYNAMIC_TYPE_PUBLIC_KEY);
+         ssl->buffers.serverDH_G.buffer = NULL;
+         XFREE(ssl->buffers.serverDH_P.buffer, ssl->heap, DYNAMIC_TYPE_PUBLIC_KEY);
+@@ -16805,6 +16816,7 @@
+         }
+         else
+ #endif
++#ifndef WOLFSSL_MYSQL_COMPATIBLE
+         if (ssl->ctx->method->version.major == SSLv3_MAJOR &&
+                              ssl->ctx->method->version.minor == TLSv1_2_MINOR) {
+             /* TLS v1.2 capable client not allowed to downgrade when connecting
+@@ -16817,6 +16829,7 @@
+                 return VERSION_ERROR;
+             }
+         }
++#endif
+ 
+         /* session id */
+         ssl->arrays->sessionIDSz = input[i++];
+@@ -17375,6 +17388,8 @@
+                                                                         length);
+                     args->idx += length;
+ 
++                    ssl->buffers.weOwnDH= 1;
++
+                     /* pub */
+                     if ((args->idx - args->begin) + OPAQUE16_LEN > size) {
+                         ERROR_OUT(BUFFER_ERROR, exit_dske);
+@@ -17566,6 +17581,8 @@
+                                                                         length);
+                     args->idx += length;
+ 
++                    ssl->buffers.weOwnDH= 1;
++
+                     /* pub */
+                     if ((args->idx - args->begin) + OPAQUE16_LEN > size) {
+                         ERROR_OUT(BUFFER_ERROR, exit_dske);
+diff -ur -N -d -x CMakeLists.txt wolfssl-3.13.0-pristine/src/ssl.c wolfssl-3.13.0/src/ssl.c
+--- wolfssl-3.13.0-pristine/src/ssl.c	2017-12-21 19:23:03.000000000 +0200
++++ wolfssl-3.13.0/src/ssl.c	2018-01-03 17:13:10.889281600 +0200
+@@ -23442,6 +23442,230 @@
+ 
+     return WOLFSSL_SUCCESS;
+ }
++
++
++/* return WOLFSSL_SUCCESS if success, WOLFSSL_FATAL_ERROR if error */
++static int wolfSSL_RSA_PubLoadDer(WOLFSSL_RSA* rsa, const unsigned char* derBuf, int derSz)
++{
++    word32 idx = 0;
++    int    ret;
++
++    WOLFSSL_ENTER("wolfSSL_RSA_LoadDer");
++
++    if (rsa == NULL || rsa->internal == NULL || derBuf == NULL || derSz <= 0) {
++        WOLFSSL_MSG("Bad function arguments");
++        return WOLFSSL_FATAL_ERROR;
++    }
++
++    ret = wc_RsaPublicKeyDecode(derBuf, &idx, (RsaKey*)rsa->internal, derSz);
++    if (ret < 0) {
++        WOLFSSL_MSG("RsaPublicKeyDecode failed");
++        return WOLFSSL_FATAL_ERROR;
++    }
++
++    if (SetRsaExternal(rsa) != WOLFSSL_SUCCESS) {
++        WOLFSSL_MSG("SetRsaExternal failed");
++        return WOLFSSL_FATAL_ERROR;
++    }
++
++    rsa->inSet = 1;
++
++    return WOLFSSL_SUCCESS;
++}
++
++/* returns WOLFSSL_RSA object on success, NULL on failure */
++static RSA * wolfssl_PEM_read_mem_RSA_PUBKEY(void * buffer, int buffer_size)
++{
++    byte *der_buff = NULL;
++    int der_buff_size = 0;
++    int load_result = 0;
++    WOLFSSL_RSA *pub_rsa = NULL;
++
++    if (!buffer || !buffer_size)
++        return NULL;
++
++    if(!(der_buff = (byte *)XMALLOC(buffer_size, NULL, DYNAMIC_TYPE_DER)))
++        return NULL;
++
++    /* Convert public key from PEM format to DER format */
++    der_buff_size = wolfSSL_PubKeyPemToDer((unsigned char *)buffer, buffer_size,
++                                            der_buff, buffer_size);
++
++    if (der_buff_size <= 0)
++    {
++        ForceZero(der_buff, (word32)buffer_size);
++        XFREE(der_buff, NULL, DYNAMIC_TYPE_DER);
++        return NULL;
++    }
++
++    if (!(pub_rsa = wolfSSL_RSA_new()))
++    {
++        ForceZero(der_buff, (word32)buffer_size);
++        XFREE(der_buff, NULL, DYNAMIC_TYPE_DER);
++        return NULL;
++    }
++
++    /* Create RSA structure from public key in DER format */
++    load_result = wolfSSL_RSA_PubLoadDer(pub_rsa, der_buff, der_buff_size);
++    if (load_result == WOLFSSL_FATAL_ERROR)
++    {
++        ForceZero(der_buff, (word32)buffer_size);
++        XFREE(der_buff, NULL, DYNAMIC_TYPE_DER);
++        wolfSSL_RSA_free(pub_rsa);
++        return NULL;
++    }
++
++    return pub_rsa;
++}
++
++WOLFSSL_RSA *wolfssl_PEM_read_bio_RSA_PUBKEY(WOLFSSL_BIO *bp, WOLFSSL_RSA **x,
++                                             pem_password_cb *cb, void *u)
++{
++    byte *pem_buf;
++    int pem_buf_size;
++
++    if (bp == NULL) {
++        WOLFSSL_MSG("NULL argument passed in");
++        return NULL;
++    }
++    if (bp->type != BIO_MEMORY) {
++        WOLFSSL_MSG("currently only works with memory BIOs");
++        return NULL;
++    }
++    pem_buf_size = wolfSSL_BIO_get_mem_data(bp, &pem_buf);
++    /* Create RSA structure from DER buffer */
++    return wolfssl_PEM_read_mem_RSA_PUBKEY(pem_buf, pem_buf_size);
++}
++
++WOLFSSL_RSA *wolfssl_PEM_read_RSA_PUBKEY(FILE * fp,
++                                 WOLFSSL_RSA ** x,
++                                 pem_password_cb * cb,
++                                 void * u)
++{
++    int file_size = 0;
++    int pem_buff_size = 0;
++    byte *pem_buff = NULL;
++    XFILE file = (XFILE) fp;
++    WOLFSSL_RSA *pub_rsa = NULL;
++
++    (void)x;
++    (void)cb;
++    (void)u;
++    /* Get file size */
++    if (!file)
++        return NULL;
++    XFSEEK(file, 0, XSEEK_END);
++    file_size = XFTELL(file);
++    XREWIND(file);
++
++    if (!file_size ||
++        !(pem_buff = (byte *)XMALLOC(file_size, NULL, DYNAMIC_TYPE_PEM)))
++        return NULL;
++
++    /* Read file content */
++    pem_buff_size = (int) XFREAD(pem_buff, 1, file_size, file);
++    if (pem_buff_size != file_size)
++    {
++        ForceZero(pem_buff, (word32)file_size);
++        XFREE(pem_buff, NULL, DYNAMIC_TYPE_PEM);
++        return NULL;
++    }
++
++    /* Create RSA structure from DER buffer */
++    if (!(pub_rsa = wolfssl_PEM_read_mem_RSA_PUBKEY(pem_buff, pem_buff_size)))
++    {
++        ForceZero(pem_buff, (word32)file_size);
++        XFREE(pem_buff, NULL, DYNAMIC_TYPE_PEM);
++        return NULL;
++    }
++
++    return pub_rsa;
++}
++
++WOLFSSL_RSA *wolfssl_PEM_read_RSAPrivateKey(FILE *fp,
++                                    WOLFSSL_RSA ** x,
++                                    pem_password_cb * cb,
++                                    void * u)
++{
++    int file_size = 0;
++    int pem_buff_size = 0;
++    int der_buff_size = 0;
++    int load_result = 0;
++    byte *pem_buff = NULL;
++    byte *der_buff = NULL;
++    WOLFSSL_RSA *priv_rsa = NULL;
++    XFILE file = (XFILE) fp;
++
++    (void)x;
++    (void)cb;
++    (void)u;
++    /* Get file size */
++    if (!file)
++        return NULL;
++    XFSEEK(file, 0, XSEEK_END);
++    file_size = XFTELL(file);
++    XREWIND(file);
++
++    if (!file_size ||
++        !(pem_buff = (byte *)XMALLOC(file_size, NULL, DYNAMIC_TYPE_PEM)))
++    {
++        return NULL;
++    }
++
++    /* Read file content */
++    pem_buff_size = (int) XFREAD(pem_buff, 1, file_size, file);
++    if (pem_buff_size != file_size)
++    {
++        ForceZero(pem_buff, (word32)file_size);
++        XFREE(pem_buff, NULL, DYNAMIC_TYPE_PEM);
++        return NULL;
++    }
++
++    if (!(der_buff = (byte *)XMALLOC(pem_buff_size, NULL, DYNAMIC_TYPE_DER)))
++    {
++
++        ForceZero(pem_buff, (word32)file_size);
++        XFREE(pem_buff, NULL, DYNAMIC_TYPE_PEM);
++        return NULL;
++    }
++
++    /* Convert private key from PEM format to DER format */
++    der_buff_size = wolfSSL_KeyPemToDer(pem_buff, pem_buff_size,
++                                        der_buff, pem_buff_size,
++                                        NULL);
++
++    if (der_buff_size <= 0)
++    {
++        ForceZero(pem_buff, (word32)file_size);
++        XFREE(pem_buff, NULL, DYNAMIC_TYPE_PEM);
++        ForceZero(der_buff, (word32)pem_buff_size);
++        XFREE(der_buff, NULL, DYNAMIC_TYPE_DER);
++        return NULL;
++    }
++
++    if (!(priv_rsa = wolfSSL_RSA_new()))
++    {
++        ForceZero(pem_buff, (word32)file_size);
++        XFREE(pem_buff, NULL, DYNAMIC_TYPE_PEM);
++        ForceZero(der_buff, (word32)pem_buff_size);
++        XFREE(der_buff, NULL, DYNAMIC_TYPE_DER);
++        return NULL;
++    }
++
++    /* Create RSA structure from private key in DER format */
++    load_result = wolfSSL_RSA_LoadDer(priv_rsa, der_buff, der_buff_size);
++    if (load_result == WOLFSSL_FATAL_ERROR)
++    {
++        ForceZero(pem_buff, (word32)file_size);
++        XFREE(pem_buff, NULL, DYNAMIC_TYPE_PEM);
++        ForceZero(der_buff, (word32)pem_buff_size);
++        XFREE(der_buff, NULL, DYNAMIC_TYPE_DER);
++        wolfSSL_RSA_free(priv_rsa);
++        return NULL;
++    }
++
++    return priv_rsa;
++}
+ #endif /* NO_RSA */
+ 
+ 
+diff -ur -N -d -x CMakeLists.txt wolfssl-3.13.0-pristine/wolfssl/openssl/md5.h wolfssl-3.13.0/wolfssl/openssl/md5.h
+--- wolfssl-3.13.0-pristine/wolfssl/openssl/md5.h	2017-12-21 19:23:03.000000000 +0200
++++ wolfssl-3.13.0/wolfssl/openssl/md5.h	2018-01-04 10:59:15.905576800 +0200
+@@ -20,7 +20,7 @@
+ 
+ 
+ typedef struct WOLFSSL_MD5_CTX {
+-    int holder[28 + (WC_ASYNC_DEV_SIZE / sizeof(int))];   /* big enough to hold wolfcrypt md5, but check on init */
++    void *holder[28 + (WC_ASYNC_DEV_SIZE / sizeof(void *))];   /* big enough to hold wolfcrypt md5, but check on init */
+ } WOLFSSL_MD5_CTX;
+ 
+ WOLFSSL_API int wolfSSL_MD5_Init(WOLFSSL_MD5_CTX*);
+diff -ur -N -d -x CMakeLists.txt wolfssl-3.13.0-pristine/wolfssl/openssl/pem.h wolfssl-3.13.0/wolfssl/openssl/pem.h
+--- wolfssl-3.13.0-pristine/wolfssl/openssl/pem.h	2017-12-21 19:23:03.000000000 +0200
++++ wolfssl-3.13.0/wolfssl/openssl/pem.h	2018-01-03 17:13:10.904907100 +0200
+@@ -35,10 +35,19 @@
+ WOLFSSL_RSA *wolfSSL_PEM_read_RSAPublicKey(FILE *fp, WOLFSSL_RSA **x,
+                                            pem_password_cb *cb, void *u);
+ WOLFSSL_API
++WOLFSSL_RSA *wolfssl_PEM_read_RSAPrivateKey(FILE *, WOLFSSL_RSA **, pem_password_cb *, void *);
++
++WOLFSSL_API
++WOLFSSL_RSA *wolfssl_PEM_read_bio_RSA_PUBKEY(WOLFSSL_BIO *bp, WOLFSSL_RSA **x,
++                                             pem_password_cb *cb, void *u);
++WOLFSSL_API
+ int wolfSSL_PEM_write_RSAPublicKey(FILE *fp, WOLFSSL_RSA *x);
+ 
+ WOLFSSL_API
+ int wolfSSL_PEM_write_RSA_PUBKEY(FILE *fp, WOLFSSL_RSA *x);
++
++WOLFSSL_API
++WOLFSSL_RSA * wolfssl_PEM_read_RSA_PUBKEY(FILE *, WOLFSSL_RSA **, pem_password_cb *, void *);
+ #endif /* NO_FILESYSTEM */
+ 
+ /* DSA */
+@@ -123,6 +132,7 @@
+ #define PEM_write_RSA_PUBKEY        wolfSSL_PEM_write_RSA_PUBKEY
+ #define PEM_write_RSAPublicKey      wolfSSL_PEM_write_RSAPublicKey
+ #define PEM_read_RSAPublicKey       wolfSSL_PEM_read_RSAPublicKey
++#define PEM_read_bio_RSA_PUBKEY     wolfssl_PEM_read_bio_RSA_PUBKEY
+ /* DSA */
+ #define PEM_write_bio_DSAPrivateKey wolfSSL_PEM_write_bio_DSAPrivateKey
+ #define PEM_write_DSAPrivateKey     wolfSSL_PEM_write_DSAPrivateKey
+@@ -136,6 +146,9 @@
+ #define PEM_read_PUBKEY         wolfSSL_PEM_read_PUBKEY
+ #define EVP_PKEY_type           wolfSSL_EVP_PKEY_type
+ 
++#define PEM_read_RSAPrivateKey  wolfssl_PEM_read_RSAPrivateKey
++#define PEM_read_RSA_PUBKEY     wolfssl_PEM_read_RSA_PUBKEY
++
+ #ifdef __cplusplus
+     }  /* extern "C" */ 
+ #endif
+diff -ur -N -d -x CMakeLists.txt wolfssl-3.13.0-pristine/wolfssl/openssl/sha.h wolfssl-3.13.0/wolfssl/openssl/sha.h
+--- wolfssl-3.13.0-pristine/wolfssl/openssl/sha.h	2017-12-21 19:23:03.000000000 +0200
++++ wolfssl-3.13.0/wolfssl/openssl/sha.h	2018-01-03 17:55:41.094027800 +0200
+@@ -18,7 +18,7 @@
+ 
+ typedef struct WOLFSSL_SHA_CTX {
+     /* big enough to hold wolfcrypt Sha, but check on init */
+-    int holder[28 + (WC_ASYNC_DEV_SIZE / sizeof(int))];
++    void* holder[28 + (WC_ASYNC_DEV_SIZE / sizeof(void *))];
+ } WOLFSSL_SHA_CTX;
+ 
+ WOLFSSL_API int wolfSSL_SHA_Init(WOLFSSL_SHA_CTX*);
+diff -ur -N -d -x CMakeLists.txt wolfssl-3.13.0-pristine/wolfssl/ssl.h wolfssl-3.13.0/wolfssl/ssl.h
+--- wolfssl-3.13.0-pristine/wolfssl/ssl.h	2017-12-21 19:23:03.000000000 +0200
++++ wolfssl-3.13.0/wolfssl/ssl.h	2018-01-03 17:13:10.904907100 +0200
+@@ -506,7 +506,7 @@
+ #endif /* SESSION_INDEX && SESSION_CERTS */
+ 
+ typedef int (*VerifyCallback)(int, WOLFSSL_X509_STORE_CTX*);
+-typedef int (pem_password_cb)(char*, int, int, void*);
++typedef int pem_password_cb(char*, int, int, void*);
+ 
+ WOLFSSL_API void wolfSSL_CTX_set_verify(WOLFSSL_CTX*, int,
+                                       VerifyCallback verify_callback);
