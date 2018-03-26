@@ -12,7 +12,7 @@ diff -ur -N -d -x CMakeLists.txt wolfssl-3.14.0-pristine/IDE/MYSQL/CMakeLists_wo
 
 diff -ur -N -d -x CMakeLists.txt wolfssl-3.14.0-pristine/src/internal.c wolfssl-3.14.0/src/internal.c
 --- wolfssl-3.14.0-pristine/src/internal.c	2018-03-02 23:39:08.000000000 +0200
-+++ wolfssl-3.14.0/src/internal.c	2018-03-07 19:10:39.144827200 +0200
++++ wolfssl-3.14.0/src/internal.c	2018-03-08 21:21:18.378569300 +0200
 @@ -3993,6 +3993,17 @@
      ssl->devId = ctx->devId;
  #endif
@@ -49,7 +49,7 @@ diff -ur -N -d -x CMakeLists.txt wolfssl-3.14.0-pristine/src/internal.c wolfssl-
          ssl->arrays->sessionIDSz = input[i++];
 diff -ur -N -d -x CMakeLists.txt wolfssl-3.14.0-pristine/src/ssl.c wolfssl-3.14.0/src/ssl.c
 --- wolfssl-3.14.0-pristine/src/ssl.c	2018-03-02 23:39:08.000000000 +0200
-+++ wolfssl-3.14.0/src/ssl.c	2018-03-07 11:40:45.412543500 +0200
++++ wolfssl-3.14.0/src/ssl.c	2018-03-08 18:56:42.942706300 +0200
 @@ -25556,6 +25556,230 @@
  #endif
      return WOLFSSL_SUCCESS;
@@ -281,9 +281,18 @@ diff -ur -N -d -x CMakeLists.txt wolfssl-3.14.0-pristine/src/ssl.c wolfssl-3.14.
  #endif /* NO_RSA */
 
  #ifndef NO_WOLFSSL_STUB
+@@ -31991,7 +32215,7 @@
+ #endif
+ #endif
+
+-#if defined(WOLFSSL_NGINX) || defined(WOLFSSL_HAPROXY)
++#if defined(WOLFSSL_NGINX) || defined(WOLFSSL_HAPROXY) || defined(OPENSSL_EXTRA)
+ int wolfSSL_X509_get_ex_new_index(int idx, void *arg, void *a, void *b, void *c)
+ {
+     static int x509_idx = 0;
 diff -ur -N -d -x CMakeLists.txt wolfssl-3.14.0-pristine/wolfssl/openssl/pem.h wolfssl-3.14.0/wolfssl/openssl/pem.h
 --- wolfssl-3.14.0-pristine/wolfssl/openssl/pem.h	2018-03-02 23:39:08.000000000 +0200
-+++ wolfssl-3.14.0/wolfssl/openssl/pem.h	2018-03-07 17:27:18.911790600 +0200
++++ wolfssl-3.14.0/wolfssl/openssl/pem.h	2018-03-08 18:54:49.184371400 +0200
 @@ -59,10 +59,19 @@
  WOLFSSL_RSA *wolfSSL_PEM_read_RSAPublicKey(FILE *fp, WOLFSSL_RSA **x,
                                             pem_password_cb *cb, void *u);
@@ -312,10 +321,8 @@ diff -ur -N -d -x CMakeLists.txt wolfssl-3.14.0-pristine/wolfssl/openssl/pem.h w
  /* DSA */
  #define PEM_write_bio_DSAPrivateKey wolfSSL_PEM_write_bio_DSAPrivateKey
  #define PEM_write_DSAPrivateKey     wolfSSL_PEM_write_DSAPrivateKey
-@@ -157,9 +167,12 @@
- #define PEM_write_EC_PUBKEY        wolfSSL_PEM_write_EC_PUBKEY
- #define PEM_write_ECPrivateKey     wolfSSL_PEM_write_ECPrivateKey
- /* EVP_KEY */
+@@ -160,6 +170,9 @@
+ #define PEM_read_bio_PrivateKey wolfSSL_PEM_read_bio_PrivateKey
  #define PEM_read_PUBKEY         wolfSSL_PEM_read_PUBKEY
  #define EVP_PKEY_type           wolfSSL_EVP_PKEY_type
 +
@@ -337,13 +344,13 @@ diff -ur -N -d -x CMakeLists.txt wolfssl-3.14.0-pristine/wolfssl/openssl/rsa.h w
  #endif /* HAVE_FIPS */
 diff -ur -N -d -x CMakeLists.txt wolfssl-3.14.0-pristine/wolfssl/ssl.h wolfssl-3.14.0/wolfssl/ssl.h
 --- wolfssl-3.14.0-pristine/wolfssl/ssl.h	2018-03-02 23:39:08.000000000 +0200
-+++ wolfssl-3.14.0/wolfssl/ssl.h	2018-03-07 19:08:15.910300300 +0200
-@@ -590,7 +590,7 @@
- #endif /* SESSION_INDEX && SESSION_CERTS */
++++ wolfssl-3.14.0/wolfssl/ssl.h	2018-03-08 18:59:04.808986600 +0200
+@@ -2727,7 +2727,7 @@
+ WOLFSSL_API void wolfSSL_OPENSSL_config(char *config_name);
+ #endif
 
- typedef int (*VerifyCallback)(int, WOLFSSL_X509_STORE_CTX*);
--typedef int (pem_password_cb)(char*, int, int, void*);
-+typedef int pem_password_cb(char*, int, int, void*);
- #ifdef OPENSSL_EXTRA
- typedef void (CallbackInfoState)(const WOLFSSL*, int, int);
-
+-#if defined(WOLFSSL_NGINX) || defined(WOLFSSL_HAPROXY)
++#if defined(WOLFSSL_NGINX) || defined(WOLFSSL_HAPROXY) || defined(OPENSSL_EXTRA)
+ /* Not an OpenSSL API. */
+ WOLFSSL_LOCAL int wolfSSL_get_ocsp_response(WOLFSSL* ssl, byte** response);
+ /* Not an OpenSSL API. */
