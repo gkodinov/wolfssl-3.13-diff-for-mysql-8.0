@@ -1,22 +1,22 @@
-diff -ur -N -d -x CMakeLists.txt wolfssl-3.14.0-pristine/IDE/MYSQL/CMakeLists_wolfSSL.txt wolfssl-3.14.0/IDE/MYSQL/CMakeLists_wolfSSL.txt
---- wolfssl-3.14.0-pristine/IDE/MYSQL/CMakeLists_wolfSSL.txt	2018-03-02 23:38:23.000000000 +0200
-+++ wolfssl-3.14.0/IDE/MYSQL/CMakeLists_wolfSSL.txt	2018-03-07 10:47:54.077997300 +0200
+diff -ur -N -d -x CMakeLists.txt -x tags wolfssl-3.14.0-pristine/IDE/MYSQL/CMakeLists_wolfSSL.txt wolfssl-3.14.0/IDE/MYSQL/CMakeLists_wolfSSL.txt
+--- wolfssl-3.14.0-pristine/IDE/MYSQL/CMakeLists_wolfSSL.txt	2018-03-02 22:38:23.000000000 +0100
++++ wolfssl-3.14.0/IDE/MYSQL/CMakeLists_wolfSSL.txt	2018-05-22 16:24:14.711987854 +0200
 @@ -32,7 +32,7 @@
-
+ 
  SET(WOLFSSL_SOURCES  src/crl.c src/internal.c src/keys.c src/sniffer.c
          src/tls.c src/wolfio.c src/ocsp.c src/ssl.c
 -                                ../../client/get_password.c )
 +                                ../../client/get_password.cc )
-
+ 
  ADD_CONVENIENCE_LIBRARY(wolfssl ${WOLFSSL_SOURCES})
-
-diff -ur -N -d -x CMakeLists.txt wolfssl-3.14.0-pristine/src/internal.c wolfssl-3.14.0/src/internal.c
---- wolfssl-3.14.0-pristine/src/internal.c	2018-03-02 23:39:08.000000000 +0200
-+++ wolfssl-3.14.0/src/internal.c	2018-03-08 21:21:18.378569300 +0200
+ 
+diff -ur -N -d -x CMakeLists.txt -x tags wolfssl-3.14.0-pristine/src/internal.c wolfssl-3.14.0/src/internal.c
+--- wolfssl-3.14.0-pristine/src/internal.c	2018-03-02 22:39:08.000000000 +0100
++++ wolfssl-3.14.0/src/internal.c	2018-05-22 16:24:14.716987936 +0200
 @@ -3993,6 +3993,17 @@
      ssl->devId = ctx->devId;
  #endif
-
+ 
 +    /* downgrade the version according to the flags */
 +    if (ssl->options.downgrade)
 +    {
@@ -44,13 +44,47 @@ diff -ur -N -d -x CMakeLists.txt wolfssl-3.14.0-pristine/src/internal.c wolfssl-
              }
          }
 +#endif
-
+ 
          /* session id */
          ssl->arrays->sessionIDSz = input[i++];
-diff -ur -N -d -x CMakeLists.txt wolfssl-3.14.0-pristine/src/ssl.c wolfssl-3.14.0/src/ssl.c
---- wolfssl-3.14.0-pristine/src/ssl.c	2018-03-02 23:39:08.000000000 +0200
-+++ wolfssl-3.14.0/src/ssl.c	2018-03-08 18:56:42.942706300 +0200
-@@ -25556,6 +25556,230 @@
+diff -ur -N -d -x CMakeLists.txt -x tags wolfssl-3.14.0-pristine/src/ssl.c wolfssl-3.14.0/src/ssl.c
+--- wolfssl-3.14.0-pristine/src/ssl.c	2018-03-02 22:39:08.000000000 +0100
++++ wolfssl-3.14.0/src/ssl.c	2018-05-22 16:51:04.794258756 +0200
+@@ -14948,7 +14948,7 @@
+      *
+      * Returns the error value
+      */
+-    unsigned long wolfSSL_ERR_get_error_line_data(const char** file, int* line,
++    int _INT_wolfSSL_ERR_get_error_line_data(const char** file, int* line,
+                                                   const char** data, int *flags)
+     {
+         WOLFSSL_STUB("wolfSSL_ERR_get_error_line_data");
+@@ -14963,6 +14963,24 @@
+     }
+ 
+ 
++	/* Similar to wolfSSL_ERR_get_error_line but takes in a flags argument for
++	* more flexability.
++	*
++	* file  output pointer to file where error happened
++	* line  output to line number of error
++	* data  output data. Is a string if ERR_TXT_STRING flag is used
++	* flags bit flag to adjust data output
++	*
++	* Returns the error value
++	*/
++	unsigned long wolfSSL_ERR_get_error_line_data(const char** file, int* line,
++		const char** data, int *flags)
++	{
++		int retVal = _INT_wolfSSL_ERR_get_error_line_data(file, line, data, flags);
++		if (retVal < 0) return 0;
++		return retVal;
++	}
++
+     WOLFSSL_API pem_password_cb* wolfSSL_CTX_get_default_passwd_cb(
+                                                                WOLFSSL_CTX *ctx)
+     {
+@@ -25556,6 +25574,230 @@
  #endif
      return WOLFSSL_SUCCESS;
  }
@@ -279,20 +313,61 @@ diff -ur -N -d -x CMakeLists.txt wolfssl-3.14.0-pristine/src/ssl.c wolfssl-3.14.
 +    return priv_rsa;
 +}
  #endif /* NO_RSA */
-
+ 
  #ifndef NO_WOLFSSL_STUB
-@@ -31991,7 +32215,7 @@
+@@ -31991,7 +32233,7 @@
  #endif
  #endif
-
+ 
 -#if defined(WOLFSSL_NGINX) || defined(WOLFSSL_HAPROXY)
 +#if defined(WOLFSSL_NGINX) || defined(WOLFSSL_HAPROXY) || defined(OPENSSL_EXTRA)
  int wolfSSL_X509_get_ex_new_index(int idx, void *arg, void *a, void *b, void *c)
  {
      static int x509_idx = 0;
-diff -ur -N -d -x CMakeLists.txt wolfssl-3.14.0-pristine/wolfssl/openssl/pem.h wolfssl-3.14.0/wolfssl/openssl/pem.h
---- wolfssl-3.14.0-pristine/wolfssl/openssl/pem.h	2018-03-02 23:39:08.000000000 +0200
-+++ wolfssl-3.14.0/wolfssl/openssl/pem.h	2018-03-08 18:54:49.184371400 +0200
+@@ -32191,6 +32433,22 @@
+     return WOLFSSL_SUCCESS;
+ }
+ 
++
++
++int wolfSSL_X509_check_ip_asc(WOLFSSL_X509 *x, const char *address, unsigned int flags)
++{
++  (void) x;
++  (void) address;
++  (void) flags;
++
++#ifdef WOLFSSL_MYSQL_COMPATIBLE
++    return 1;
++#else
++    return WOLFSSL_NOT_IMPLEMENTED;
++#endif
++}
++
++
+ int wolfSSL_i2a_ASN1_INTEGER(BIO *bp, const WOLFSSL_ASN1_INTEGER *a)
+ {
+     static char num[16] = { '0', '1', '2', '3', '4', '5', '6', '7',
+diff -ur -N -d -x CMakeLists.txt -x tags wolfssl-3.14.0-pristine/wolfcrypt/src/asn.c wolfssl-3.14.0/wolfcrypt/src/asn.c
+--- wolfssl-3.14.0-pristine/wolfcrypt/src/asn.c	2018-03-02 22:39:08.000000000 +0100
++++ wolfssl-3.14.0/wolfcrypt/src/asn.c	2018-05-22 16:24:14.725988085 +0200
+@@ -4294,9 +4294,11 @@
+                 #endif /* OPENSSL_EXTRA */
+             }
+             if (copy && !tooBig) {
+-                XMEMCPY(&full[idx], copy, XSTRLEN(copy));
+-                idx += (word32)XSTRLEN(copy);
+-                XMEMCPY(&full[idx], &cert->source[cert->srcIdx], strLen);
++				XMEMCPY(&full[idx], copy, XSTRLEN(copy));
++				idx += (word32)XSTRLEN(copy);
++				XMEMCPY(&full[idx], "=", XSTRLEN("="));
++				idx += (word32)XSTRLEN("=");
++				XMEMCPY(&full[idx], &cert->source[cert->srcIdx], strLen);
+                 idx += strLen;
+             }
+ 
+diff -ur -N -d -x CMakeLists.txt -x tags wolfssl-3.14.0-pristine/wolfssl/openssl/pem.h wolfssl-3.14.0/wolfssl/openssl/pem.h
+--- wolfssl-3.14.0-pristine/wolfssl/openssl/pem.h	2018-03-02 22:39:08.000000000 +0100
++++ wolfssl-3.14.0/wolfssl/openssl/pem.h	2018-05-22 16:24:14.725988085 +0200
 @@ -59,10 +59,19 @@
  WOLFSSL_RSA *wolfSSL_PEM_read_RSAPublicKey(FILE *fp, WOLFSSL_RSA **x,
                                             pem_password_cb *cb, void *u);
@@ -304,14 +379,14 @@ diff -ur -N -d -x CMakeLists.txt wolfssl-3.14.0-pristine/wolfssl/openssl/pem.h w
 +                                             pem_password_cb *cb, void *u);
 +WOLFSSL_API
  int wolfSSL_PEM_write_RSAPublicKey(FILE *fp, WOLFSSL_RSA *x);
-
+ 
  WOLFSSL_API
  int wolfSSL_PEM_write_RSA_PUBKEY(FILE *fp, WOLFSSL_RSA *x);
 +
 +WOLFSSL_API
 +WOLFSSL_RSA * wolfssl_PEM_read_RSA_PUBKEY(FILE *, WOLFSSL_RSA **, pem_password_cb *, void *);
  #endif /* NO_FILESYSTEM */
-
+ 
  /* DSA */
 @@ -148,6 +157,7 @@
  #define PEM_write_RSA_PUBKEY        wolfSSL_PEM_write_RSA_PUBKEY
@@ -321,19 +396,19 @@ diff -ur -N -d -x CMakeLists.txt wolfssl-3.14.0-pristine/wolfssl/openssl/pem.h w
  /* DSA */
  #define PEM_write_bio_DSAPrivateKey wolfSSL_PEM_write_bio_DSAPrivateKey
  #define PEM_write_DSAPrivateKey     wolfSSL_PEM_write_DSAPrivateKey
-@@ -160,6 +170,9 @@
- #define PEM_read_bio_PrivateKey wolfSSL_PEM_read_bio_PrivateKey
+@@ -161,6 +171,9 @@
  #define PEM_read_PUBKEY         wolfSSL_PEM_read_PUBKEY
  #define EVP_PKEY_type           wolfSSL_EVP_PKEY_type
-+
+ 
 +#define PEM_read_RSAPrivateKey  wolfssl_PEM_read_RSAPrivateKey
 +#define PEM_read_RSA_PUBKEY     wolfssl_PEM_read_RSA_PUBKEY
-
++
  #ifdef __cplusplus
-     }  /* extern "C" */
-diff -ur -N -d -x CMakeLists.txt wolfssl-3.14.0-pristine/wolfssl/openssl/rsa.h wolfssl-3.14.0/wolfssl/openssl/rsa.h
---- wolfssl-3.14.0-pristine/wolfssl/openssl/rsa.h	2018-03-02 23:38:24.000000000 +0200
-+++ wolfssl-3.14.0/wolfssl/openssl/rsa.h	2018-03-07 14:04:17.400487500 +0200
+     }  /* extern "C" */ 
+ #endif
+diff -ur -N -d -x CMakeLists.txt -x tags wolfssl-3.14.0-pristine/wolfssl/openssl/rsa.h wolfssl-3.14.0/wolfssl/openssl/rsa.h
+--- wolfssl-3.14.0-pristine/wolfssl/openssl/rsa.h	2018-03-02 22:38:24.000000000 +0100
++++ wolfssl-3.14.0/wolfssl/openssl/rsa.h	2018-05-22 16:24:14.726988101 +0200
 @@ -43,6 +43,7 @@
      #define RSA_PKCS1_PADDING      0
      #define RSA_PKCS1_OAEP_PADDING 1
@@ -342,15 +417,35 @@ diff -ur -N -d -x CMakeLists.txt wolfssl-3.14.0-pristine/wolfssl/openssl/rsa.h w
      #define RSA_PKCS1_PADDING      WC_RSA_PKCSV15_PAD
      #define RSA_PKCS1_OAEP_PADDING WC_RSA_OAEP_PAD
  #endif /* HAVE_FIPS */
-diff -ur -N -d -x CMakeLists.txt wolfssl-3.14.0-pristine/wolfssl/ssl.h wolfssl-3.14.0/wolfssl/ssl.h
---- wolfssl-3.14.0-pristine/wolfssl/ssl.h	2018-03-02 23:39:08.000000000 +0200
-+++ wolfssl-3.14.0/wolfssl/ssl.h	2018-03-08 18:59:04.808986600 +0200
+diff -ur -N -d -x CMakeLists.txt -x tags wolfssl-3.14.0-pristine/wolfssl/openssl/ssl.h wolfssl-3.14.0/wolfssl/openssl/ssl.h
+--- wolfssl-3.14.0-pristine/wolfssl/openssl/ssl.h	2018-03-02 22:39:08.000000000 +0100
++++ wolfssl-3.14.0/wolfssl/openssl/ssl.h	2018-05-22 16:43:34.236077238 +0200
+@@ -874,6 +874,7 @@
+ #define SSL_in_init                       wolfSSL_SSL_in_init
+ #define SSL_get0_session                  wolfSSL_SSL_get0_session
+ #define X509_check_host                   wolfSSL_X509_check_host
++#define X509_check_ip_asc                 wolfSSL_X509_check_ip_asc
+ #define i2a_ASN1_INTEGER                  wolfSSL_i2a_ASN1_INTEGER
+ #define ERR_peek_error_line_data          wolfSSL_ERR_peek_error_line_data
+ #define ERR_load_BIO_strings              wolfSSL_ERR_load_BIO_strings
+diff -ur -N -d -x CMakeLists.txt -x tags wolfssl-3.14.0-pristine/wolfssl/ssl.h wolfssl-3.14.0/wolfssl/ssl.h
+--- wolfssl-3.14.0-pristine/wolfssl/ssl.h	2018-03-02 22:39:08.000000000 +0100
++++ wolfssl-3.14.0/wolfssl/ssl.h	2018-05-22 16:50:55.805110309 +0200
 @@ -2727,7 +2727,7 @@
  WOLFSSL_API void wolfSSL_OPENSSL_config(char *config_name);
  #endif
-
+ 
 -#if defined(WOLFSSL_NGINX) || defined(WOLFSSL_HAPROXY)
 +#if defined(WOLFSSL_NGINX) || defined(WOLFSSL_HAPROXY) || defined(OPENSSL_EXTRA)
  /* Not an OpenSSL API. */
  WOLFSSL_LOCAL int wolfSSL_get_ocsp_response(WOLFSSL* ssl, byte** response);
  /* Not an OpenSSL API. */
+@@ -2760,6 +2760,8 @@
+ #endif
+ WOLFSSL_API int wolfSSL_X509_check_host(WOLFSSL_X509 *x, const char *chk,
+     size_t chklen, unsigned int flags, char **peername);
++WOLFSSL_API int wolfSSL_X509_check_ip_asc(WOLFSSL_X509 *x, const char *address,
++     unsigned int flags);
+ 
+ WOLFSSL_API int wolfSSL_i2a_ASN1_INTEGER(WOLFSSL_BIO *bp,
+     const WOLFSSL_ASN1_INTEGER *a);
